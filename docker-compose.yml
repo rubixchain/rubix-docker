@@ -15,6 +15,10 @@ services:
       POSTGRES_USER: rubix
       POSTGRES_PASSWORD: rubixpass
       POSTGRES_DB: rubix
+      # Postgres 18's image moved the default data dir to /var/lib/postgresql/18/docker
+      # and the VOLUME to /var/lib/postgresql. Pin PGDATA back to the path we bind-mount
+      # so persistence works the same on 16, 17, and 18.
+      PGDATA: /var/lib/postgresql/data
     volumes:
       - "${DATA_PATH:-./data}/db:/var/lib/postgresql/data"
     ports:
