@@ -176,6 +176,10 @@ curl -s -X POST localhost:20000/rubix/v1/signature \
 - **Port already in use** → pick another with `--api-port` / `--swarm-port` /
   `--pg-port`, or run as a different node index.
 - **Reset everything for this node** → `./node.sh down --wipe` then `./node.sh up`.
+- **Changing the Postgres major version** (e.g. 16 → 18) is **not in-place** — a data
+  dir created by the old version won't start under the new one. Just start fresh:
+  `./node.sh down 1 --wipe` then `./node.sh up 1` (the node re-creates its DID and
+  state on a clean Postgres 18).
 
 ## 10. Files in this folder
 

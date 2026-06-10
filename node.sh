@@ -90,6 +90,7 @@ if [ ! -f "$ENVF" ]; then
   cat > "$ENVF" <<EOF
 RUBIX_VERSION=v1.0.0
 NETWORK_MODE=testnet
+POSTGRES_VERSION=18
 NODE_NAME=${name}
 DATA_PATH=./data/${name}
 API_PORT=$((20000 + idx - 1))

@@ -9,7 +9,7 @@
 
 services:
   postgres:
-    image: postgres:16
+    image: postgres:${POSTGRES_VERSION:-18}
     container_name: ${NODE_NAME:-rubix}-postgres
     environment:
       POSTGRES_USER: rubix
