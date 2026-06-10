@@ -1,0 +1,64 @@
+# Single Rubix node + its Postgres. Everything configurable via .env.
+#
+#   ./run.sh                 # build + start (auto-detects EXTERNAL_IP)
+#   ./stop.sh                # stop (data is preserved)
+#
+# Persistence: node data + Postgres live under DATA_PATH (bind mounts), and both
+# containers use restart: unless-stopped, so a `docker compose down`, container
+# crash, or host reboot resumes with NO data loss.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: ${NODE_NAME:-rubix}-postgres
+    environment:
+      POSTGRES_USER: rubix
+      POSTGRES_PASSWORD: rubixpass
+      POSTGRES_DB: rubix
+    volumes:
+      - "${DATA_PATH:-./data}/db:/var/lib/postgresql/data"
+    ports:
+      # bound to localhost — Postgres should never be public
+      - "127.0.0.1:${PG_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rubix"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  rubix:
+    build:
+      context: .
+      args:
+        RUBIX_VERSION: "${RUBIX_VERSION:-v1.0.0}"
+    image: rubix-node:${RUBIX_VERSION:-v1.0.0}
+    container_name: ${NODE_NAME:-rubix}-node
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NETWORK_MODE: ${NETWORK_MODE:-testnet}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: rubix
+      RUBIX_EXTERNAL_IP: ${EXTERNAL_IP:-}
+      RUBIX_EXTERNAL_SWARM_PORT: "${SWARM_PORT:-4002}"
+    ports:
+      # HTTP API — rubixgoplatform always listens on 20000 inside the container;
+      # API_PORT is the host port you connect to. Bound to API_BIND (localhost by
+      # default — the API has NO auth, so don't expose it publicly).
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-20000}:20000"
+      # libp2p / IPFS swarm (P2P). MUST be reachable from the internet so peers
+      # and quorums can dial this node. Published on all interfaces.
+      - "${SWARM_PORT:-4002}:4002"
+    volumes:
+      - "${DATA_PATH:-./data}/app:/app/data"
+      - "./swarm:/swarm"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "</dev/tcp/localhost/20000"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
