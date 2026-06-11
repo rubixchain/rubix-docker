@@ -52,7 +52,7 @@ if [ "$cmd" = status ]; then
   echo; echo "rubix api"
   if curl -s --max-time 4 "http://127.0.0.1:${API_PORT}/api/ping" >/dev/null 2>&1; then
     ok "reachable"
-    pid="$(curl -s --max-time 4 "http://127.0.0.1:${API_PORT}/api/get-peer-id" 2>/dev/null | grep -o '"result":[^,}]*' | head -1 | sed -E 's/.*"([^"]*)".*/\1/')"
+    pid="$(curl -s --max-time 4 "http://127.0.0.1:${API_PORT}/api/get-peer-id" 2>/dev/null | grep -o '12D3KooW[A-Za-z0-9]\{40,\}' | head -1)"
     [ -n "${pid:-}" ] && echo "    peer id : $pid"
     dids="$(curl -s --max-time 4 "http://127.0.0.1:${API_PORT}/rubix/v1/dids" 2>/dev/null | grep -o 'bafybmi[a-z0-9]*' | tr '\n' ' ')"
     echo "    dids    : ${dids:-none yet}"
