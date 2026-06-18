@@ -129,6 +129,27 @@ Or pin a specific version yourself:
 
 Either way your data is untouched — only the binary is replaced.
 
+### Build from a source branch (advanced)
+
+By default a node runs the official **release binary**. To build from a
+`rubixgoplatform` git **branch, tag, or commit** instead — e.g. to test a fix before
+it's released:
+
+```bash
+./node.sh up 1 --branch development     # clone + compile that ref, then run
+```
+
+The branch is remembered in `.env.nodeN`, so every later restart rebuilds from it.
+`./update.sh` skips branch-built nodes (there's no release to compare against). Return
+to a release binary at any time:
+
+```bash
+./node.sh up 1 --version v1.0.0         # clears the branch, back to the release
+```
+
+To build from a fork or a different main package path, override the `BUILD_REPO` /
+`BUILD_PKG` / `GO_VERSION` build args in `Dockerfile.branch`.
+
 ## 7. Ports to open
 
 | Port | Direction | Open to | Why |
