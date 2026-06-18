@@ -1,0 +1,16 @@
+# Compose override — switches the rubix service to build from source (Dockerfile.branch).
+# Never use this file alone; always layer it on top of docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.branch.yml up -d --build
+#
+# node.sh does this automatically when BUILD_BRANCH is set in the node's env file.
+
+services:
+  rubix:
+    build:
+      context: .
+      dockerfile: Dockerfile.branch
+      args:
+        BUILD_BRANCH: "${BUILD_BRANCH}"
+        KUBO_VERSION: "${KUBO_VERSION:-v0.19.1}"
+    image: "rubix-node:branch-${BUILD_BRANCH_SLUG}"

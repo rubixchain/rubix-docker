@@ -1,0 +1,55 @@
+# Build rubixgoplatform from a git branch/tag/SHA instead of a release binary.
+# Two-stage: Go compiler → same Debian runtime base as the release Dockerfile.
+#
+# Build args:
+#   BUILD_BRANCH  — branch, tag, or full SHA to check out (required)
+#   BUILD_REPO    — repo URL override (default: rubixchain/rubixgoplatform)
+#   BUILD_PKG     — go build target (default: . — adjust if main is under cmd/)
+#   GO_VERSION    — Go toolchain version (default: 1.22)
+#   KUBO_VERSION  — kubo/IPFS binary version
+
+ARG GO_VERSION=1.22
+FROM golang:${GO_VERSION}-bookworm AS builder
+
+ARG BUILD_BRANCH
+ARG BUILD_REPO=https://github.com/rubixchain/rubixgoplatform
+ARG BUILD_PKG=.
+
+RUN test -n "${BUILD_BRANCH}" || { echo "BUILD_BRANCH is required"; exit 1; }
+
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+RUN git clone --branch "${BUILD_BRANCH}" --depth 1 "${BUILD_REPO}" .
+
+RUN mkdir -p /out && \
+    go build -trimpath -o /out/rubixgoplatform ${BUILD_PKG}
+
+# ── runtime (identical base to the release Dockerfile) ───────────────────────
+FROM debian:bookworm-slim
+
+ARG TARGETARCH
+ARG KUBO_VERSION=v0.19.1
+
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bash postgresql-client gettext-base curl ca-certificates tar \
+    && rm -rf /var/lib/apt/lists/*
+
+# kubo and static files first — these don't change between branches, so they
+# stay cached. Only the binary copy below busts the cache on a branch switch.
+RUN set -eux; \
+    curl -fsSL "https://dist.ipfs.tech/kubo/${KUBO_VERSION}/kubo_${KUBO_VERSION}_linux-${TARGETARCH}.tar.gz" -o /tmp/kubo.tar.gz; \
+    tar -xzf /tmp/kubo.tar.gz -C /tmp; \
+    cp /tmp/kubo/ipfs /app/ipfs; chmod +x /app/ipfs; \
+    rm -rf /tmp/kubo /tmp/kubo.tar.gz
+
+COPY entrypoint.sh /app/entrypoint.sh
+COPY config.template.toml /app/config.template.toml
+RUN chmod +x /app/entrypoint.sh /app/ipfs
+
+# Branch-specific binary — cache busts here and nowhere else on branch change.
+COPY --from=builder /out/rubixgoplatform /app/rubixgoplatform
+RUN chmod +x /app/rubixgoplatform
+
+ENTRYPOINT ["/app/entrypoint.sh"]

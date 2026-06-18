@@ -13,6 +13,11 @@
 #
 # Override any default for a node with the same flags as run.sh, e.g.:
 #   ./node.sh up 2 --api-port 25000 --swarm-port 4500 --network mainnet
+#
+# Build from a source branch instead of a release binary:
+#   ./node.sh up 1 --branch my-feature-branch
+#   ./node.sh up 2 --branch main              # build latest main
+# The branch is remembered in .env.nodeN and used on every subsequent restart.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -20,7 +25,18 @@ cmd="${1:-}"
 case "$cmd" in
   ls) docker compose ls; exit 0;;
   up|down|logs|status) ;;
-  *) echo "usage: ./node.sh <up|down|logs|status|ls> [index] [flags]   (index defaults to 1)"; exit 0;;
+  *)
+    echo "usage: ./node.sh <up|down|logs|status|ls> [index] [flags]   (index defaults to 1)"
+    echo "  --branch <branch>   build from a git branch instead of a release binary"
+    echo "  --version <v>       release version to download (e.g. v1.0.0)"
+    echo "  --network <net>     testnet | mainnet | localnet"
+    echo "  --api-port <n>      host port for the Rubix HTTP API"
+    echo "  --swarm-port <n>    libp2p/IPFS swarm port (must be open inbound)"
+    echo "  --pg-port <n>       host port for Postgres"
+    echo "  --external-ip <ip>  public IP advertised to peers"
+    echo "  --api-bind <addr>   bind address for the API (default 127.0.0.1)"
+    echo "  --data-path <path>  directory for node data"
+    exit 0;;
 esac
 shift   # drop the command
 
@@ -29,7 +45,18 @@ if [[ "${1:-}" =~ ^[0-9]+$ ]]; then idx="$1"; shift; else idx=1; fi
 
 name="node${idx}"
 ENVF=".env.${name}"
-compose() { docker compose --env-file "$ENVF" -p "$name" "$@"; }
+# Dynamically pick up BUILD_BRANCH from the env file so that --branch persists
+# across restarts and compose() automatically layers docker-compose.branch.yml.
+compose() {
+  local override="" branch_raw
+  branch_raw="$(grep -E "^BUILD_BRANCH=.+" "$ENVF" 2>/dev/null | cut -d= -f2- | tr -d '[:space:]' || true)"
+  if [ -n "$branch_raw" ]; then
+    override="-f docker-compose.branch.yml"
+    BUILD_BRANCH_SLUG="$(echo "$branch_raw" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')"
+    export BUILD_BRANCH_SLUG
+  fi
+  docker compose --env-file "$ENVF" -p "$name" -f docker-compose.yml $override "$@"
+}
 
 if [ "$cmd" = status ]; then
   [ -f "$ENVF" ] || { echo "node $idx isn't set up yet (run ./node.sh up $idx)."; exit 1; }
@@ -105,7 +132,8 @@ fi
 set_env() { local k="$1" v="$2"; if grep -qE "^${k}=" "$ENVF"; then sed -i.bak "s|^${k}=.*|${k}=${v}|" "$ENVF" && rm -f "${ENVF}.bak"; else echo "${k}=${v}" >> "$ENVF"; fi; }
 while [ $# -gt 0 ]; do
   case "$1" in
-    --version|--rubix-version) set_env RUBIX_VERSION "$2"; shift 2;;
+    --version|--rubix-version) set_env RUBIX_VERSION "$2"; set_env BUILD_BRANCH ""; shift 2;;
+    --branch)      set_env BUILD_BRANCH "$2"; shift 2;;
     --network)     set_env NETWORK_MODE "$2"; shift 2;;
     --api-port)    set_env API_PORT     "$2"; shift 2;;
     --api-bind)    set_env API_BIND     "$2"; shift 2;;
