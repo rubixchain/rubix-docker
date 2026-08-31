@@ -4,3 +4,8 @@
 data/
 *.log
 .DS_Store
+
+# generated / environment-specific node state
+did_results.json
+quorum_did.json
+rubixgoplatform-*.tar.gz
