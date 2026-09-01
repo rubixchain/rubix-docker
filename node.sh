@@ -8,7 +8,8 @@
 #   ./node.sh up 3                 # third node  (API 20002, swarm 4003, pg 5435)
 #   ./node.sh status 1            # health board (postgres, api, ipfs, storage, cpu/mem)
 #   ./node.sh logs 2              # follow a node's logs
-#   ./node.sh down 3              # stop one node (its data is kept)
+#   ./node.sh down 3              # stop one node (data + .env.node3 are kept)
+#   ./node.sh down 3 --wipe       # stop AND delete ./data/node3 + .env.node3
 #   ./node.sh ls                  # list running node stacks
 #
 # Override any default for a node with the same flags as run.sh, e.g.:
@@ -20,6 +21,7 @@
 # The branch is remembered in .env.nodeN and used on every subsequent restart.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
+. ./common.sh
 
 cmd="${1:-}"
 case "$cmd" in
@@ -27,8 +29,9 @@ case "$cmd" in
   up|down|logs|status) ;;
   *)
     echo "usage: ./node.sh <up|down|logs|status|ls> [index] [flags]   (index defaults to 1)"
+    echo "  --wipe              (with down) also delete ./data/nodeN and .env.nodeN"
     echo "  --branch <branch>   build from a git branch instead of a release binary"
-    echo "  --version <v>       release version to download (e.g. v1.0.0)"
+    echo "  --version <v>       release version to download (default: latest GitHub release)"
     echo "  --network <net>     testnet | mainnet | localnet"
     echo "  --api-port <n>      host port for the Rubix HTTP API"
     echo "  --swarm-port <n>    libp2p/IPFS swarm port (must be open inbound)"
@@ -100,12 +103,19 @@ if [ "$cmd" = status ]; then
 fi
 
 if [ "$cmd" = down ]; then
-  compose down
+  if [ -f "$ENVF" ]; then
+    compose down
+  else
+    # No env file (already wiped?) — compose can still find the stack by project name.
+    echo "node '$name' has no $ENVF; stopping by project name."
+    NODE_NAME="$name" docker compose -p "$name" -f docker-compose.yml down || true
+  fi
   if [ "${1:-}" = "--wipe" ]; then
     rm -rf "./data/${name}"
-    echo "node '$name' stopped and WIPED (./data/${name} removed)."
+    rm -f "$ENVF"
+    echo "node '$name' stopped and WIPED (./data/${name} and $ENVF removed)."
   else
-    echo "node '$name' stopped (data kept under ./data/${name})."
+    echo "node '$name' stopped (data kept under ./data/${name}, config kept in $ENVF)."
   fi
   exit 0
 fi
@@ -114,8 +124,10 @@ fi
 # ── up ──────────────────────────────────────────────────────────────────────
 # seed a per-node env file the first time, with index-offset ports
 if [ ! -f "$ENVF" ]; then
+  # A brand-new node defaults to the latest published release.
+  seed_version="$(latest_release_or_fallback)"
   cat > "$ENVF" <<EOF
-RUBIX_VERSION=v1.0.0
+RUBIX_VERSION=${seed_version}
 NETWORK_MODE=testnet
 POSTGRES_VERSION=18
 NODE_NAME=${name}

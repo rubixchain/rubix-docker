@@ -7,7 +7,8 @@ so a reboot resumes cleanly. Built for exchanges, businesses, and anyone who wan
 run a node with minimal friction.
 
 One tool does everything: **`./node.sh`** (`run.sh`, `stop.sh`, `status.sh` are
-shortcuts for the common commands).
+shortcuts for the common commands). For a **fleet** of nodes on one host there's
+`./start_nodes.sh` and `./kill_nodes.sh`.
 
 ---
 
@@ -15,6 +16,8 @@ shortcuts for the common commands).
 
 - A Linux host (VM or server), amd64 or arm64
 - **Docker + Docker Compose v2** — check with `docker compose version`
+- `curl` (used to look up the latest release and to talk to the node API)
+- `jq` — only for the fleet helper scripts in [section 9](#9-fleet-helper-scripts-dids-quorums-balances)
 - Outbound internet (to reach the network's bootstrap peers + IPFS)
 - ~2 GB RAM and a few GB disk per node to start
 
@@ -27,6 +30,9 @@ curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker "$USER"     # run docker without sudo
 newgrp docker                       # apply the group to this shell (or log out/in)
 ```
+
+Don't run these scripts with `sudo` once that's done — a root-created `data/` dir
+makes every later non-root run fail on permissions.
 
 **b. Get this folder onto the host** (copy it, or `git clone` your repo), then:
 
@@ -52,30 +58,36 @@ curl -s localhost:20000/api/ping
 ./node.sh status              # health overview
 ./node.sh logs                # follow logs (Ctrl-C to detach)
 ./node.sh down                # stop, keep all data
-./node.sh down --wipe         # stop and delete this node's data
+./node.sh down --wipe         # stop and delete this node's data + its .env.node1
+./node.sh ls                  # list running node stacks
 ```
 
-Set anything from the command line — each flag is saved, so the node keeps it next
-time:
+Set anything from the command line — each flag is saved to `.env.nodeN`, so the node
+keeps it next time:
 
 ```bash
 ./node.sh up --api-port 20005 --swarm-port 4010 --data-path /mnt/rubix-data
 ./node.sh up --network mainnet --version v1.0.1 --external-ip 203.0.113.7
 ```
 
-| Flag | Default | Meaning |
+| Flag | Default (node *N*) | Meaning |
 |---|---|---|
-| `--version <tag>` | `v1.0.0` | rubixgoplatform release to run (bump to upgrade) |
-| `--network <mode>` | `testnet` | `testnet` / `mainnet` / `localnet` |
-| `--api-port <port>` | `20000` | host port for the node HTTP API (it always runs on 20000 *inside* the container — this is the port you connect to) |
+| `--version <tag>` | **latest GitHub release** | `rubixgoplatform` release to run. Looked up from `rubixchain/rubixgoplatform` when the node is first created, then **pinned** in `.env.nodeN` |
+| `--branch <ref>` | — | build from a git branch/tag/SHA instead of a release ([below](#build-from-a-source-branch-advanced)) |
+| `--network <mode>` | `testnet` | `testnet` / `mainnet` / `localnet` — fixed for the life of the data dir |
+| `--api-port <port>` | `20000 + (N-1)` | host port for the node HTTP API (it always runs on 20000 *inside* the container — this is the port you connect to) |
 | `--api-bind <ip>` | `127.0.0.1` | interface the API binds to. `0.0.0.0` only if a remote backend needs it (then firewall it — the API has no auth) |
-| `--swarm-port <port>` | `4002` | host port for the P2P/IPFS swarm — **must be reachable from the internet** |
-| `--pg-port <port>` | `5432` | Postgres host port (kept on localhost) |
-| `--external-ip <ip>` | auto | public/LAN IP announced to the DHT (auto-detected if unset) |
+| `--swarm-port <port>` | `4001 + (N-1)` | host port for the P2P/IPFS swarm — **must be reachable from the internet** |
+| `--pg-port <port>` | `5433 + (N-1)` | Postgres host port (kept on localhost) |
+| `--external-ip <ip>` | auto | public/LAN IP announced to the DHT (auto-detected via `api.ipify.org` if unset) |
 | `--data-path <path>` | `./data/nodeN` | where node + DB data is stored (relative or absolute) |
 
+`--wipe` is a flag of `down`, not `up`: `./node.sh down 2 --wipe`.
+
 You never have to create or edit an env file — `node.sh` writes one per node
-(`.env.nodeN`) for you. You *can* edit it directly if you prefer.
+(`.env.nodeN`) for you. You *can* edit it directly if you prefer. (`.env.example` is
+a reference listing every variable; it shows the compose fallbacks, not the
+index-offset values `node.sh` writes.)
 
 ## 4. Running several nodes on one host
 
@@ -93,6 +105,35 @@ dir, and auto-offset ports:
 Override any default per node with the same flags. Each node needs its own **swarm
 port opened inbound** (4001, 4002, 4003, …).
 
+### Starting a whole fleet at once
+
+`./start_nodes.sh` brings up **10 nodes** (by default) on a tidy port block —
+**API 8000–8009**, **Postgres 9000–9009** — which is what the helper scripts in
+[section 9](#9-fleet-helper-scripts-dids-quorums-balances) expect:
+
+```bash
+./start_nodes.sh                 # first run: creates them on TESTNET (the default)
+./start_nodes.sh --mainnet       # first run: creates them on mainnet
+./start_nodes.sh                 # later runs: each node starts on its stored network
+./start_nodes.sh --nodes 4       # only nodes 1-4
+./start_nodes.sh --version v1.0.4   # pin/change the release for every node
+./start_nodes.sh --version latest   # move every node to the newest release
+./kill_nodes.sh                  # stop them all (data kept)
+./kill_nodes.sh --wipe           # stop AND delete every data dir + .env.nodeN
+```
+
+Rules worth knowing:
+
+- **The network is decided once, at creation.** It's stored in `.env.nodeN` and reused
+  on every later run — a plain `./start_nodes.sh` never changes it. Mainnet is never
+  entered by accident: it takes an explicit `--mainnet`.
+- **Switching an existing node's network is destructive.** Rubix refuses to reuse a
+  data dir across networks, so the script stops and tells you rather than failing
+  mid-boot. `./start_nodes.sh --mainnet --wipe-switch` deletes `./data/nodeN` first
+  and re-creates the node — **DIDs, keys and tokens are gone**.
+- **Versions are left alone** on existing nodes unless you pass `--version`, so
+  branch-built nodes and deliberately pinned ones survive a plain restart.
+
 ## 5. Stopping, resuming, restarting & reboots
 
 Your data (the node's **DID/keys**, token chains, IPFS repo, and Postgres) lives under
@@ -103,8 +144,8 @@ normal stop. Both containers run with `restart: unless-stopped`. So:
 |---|---|---|
 | The node process crashes | Docker **auto-restarts** it | nothing |
 | The host **reboots** while the node was running | Docker **auto-starts** it on boot | nothing — verify with `./node.sh status` |
-| You ran `./node.sh down` | containers are stopped/removed (data kept) | `./node.sh up` to resume — **same DID, same data** |
-| You ran `./node.sh down --wipe` | containers stopped **and data deleted** | `./node.sh up` starts a brand-new node |
+| You ran `./node.sh down` | containers are stopped/removed (data kept, `.env.nodeN` kept) | `./node.sh up` to resume — **same DID, same data** |
+| You ran `./node.sh down --wipe` | containers stopped, **`./data/nodeN` and `.env.nodeN` deleted** | `./node.sh up` starts a brand-new node (back to default ports/network, since its env file is gone — use `./start_nodes.sh` to recreate a fleet node with its 8000-block port) |
 
 In short: a node **resumes with the same identity** after a crash, reboot, or
 `down` → `up`. The only way to lose data is `--wipe` (or deleting the data dir).
@@ -117,9 +158,17 @@ In short: a node **resumes with the same identity** after a crash, reboot, or
 Versions are **pinned** — a node never changes version on a plain restart.
 
 ```bash
-./update.sh           # checks the latest release, shows current -> latest, asks before updating
-./update.sh --yes     # update without the prompt (automation)
+./update.sh              # check node 1, show current -> latest, ask before updating
+./update.sh 2 5 7        # check several nodes
+./update.sh --all        # check EVERY node here and update them in one command
+./update.sh --all --yes  # same, no prompt (automation/cron)
+./update.sh --check      # report versions only, change nothing
 ```
+
+GitHub is queried once per run, however many nodes are checked. Nodes that are already
+current, pinned *ahead* of the latest release, or built from a branch are reported and
+left alone; if one node fails to rebuild the rest still get updated (the script exits
+non-zero and names the failures).
 
 Or pin a specific version yourself:
 
@@ -139,9 +188,10 @@ it's released:
 ./node.sh up 1 --branch development     # clone + compile that ref, then run
 ```
 
-The branch is remembered in `.env.nodeN`, so every later restart rebuilds from it.
-`./update.sh` skips branch-built nodes (there's no release to compare against). Return
-to a release binary at any time:
+The branch is remembered as `BUILD_BRANCH` in `.env.nodeN`, so every later restart
+rebuilds from it (`node.sh` layers `docker-compose.branch.yml` automatically).
+`./update.sh` skips branch-built nodes — there's no release to compare against.
+Return to a release binary at any time:
 
 ```bash
 ./node.sh up 1 --version v1.0.0         # clears the branch, back to the release
@@ -152,17 +202,19 @@ To build from a fork or a different main package path, override the `BUILD_REPO`
 
 ## 7. Ports to open
 
+Numbers below are for **node 1**; node *N* shifts each by *N-1*.
+
 | Port | Direction | Open to | Why |
 |---|---|---|---|
-| **`SWARM_PORT` (4002) TCP** | **inbound** | **the internet** | **Required.** The libp2p/IPFS P2P port. The node announces `EXTERNAL_IP:SWARM_PORT`; peers and quorums dial it to reach you. **Port-forward it if behind NAT.** Without it the node can call out but can't be reliably dialled (receiving tokens, acting as quorum). |
-| `API_PORT` (20000) TCP | inbound | **trusted only** | HTTP API, **no authentication**. Keep on `127.0.0.1` (default) or restrict to your backend's IP. Never expose publicly. |
-| `PG_PORT` (5432) TCP | — | nobody | Postgres is bound to localhost; leave closed. |
-| any | **outbound** | the internet | The node needs to reach bootstrap peers + IPFS. Usually already allowed. |
+| **`SWARM_PORT` (4001) TCP** | **inbound** | **the internet** | **Required.** The libp2p/IPFS P2P port. The node announces `EXTERNAL_IP:SWARM_PORT`; peers and quorums dial it to reach you. **Port-forward it if behind NAT.** Without it the node can call out but can't be reliably dialled (receiving tokens, acting as quorum). |
+| `API_PORT` (20000, or 8000 for a `start_nodes.sh` fleet) TCP | inbound | **trusted only** | HTTP API, **no authentication**. Keep on `127.0.0.1` (default) or restrict to your backend's IP. Never expose publicly. |
+| `PG_PORT` (5433, or 9000 for a fleet) TCP | — | nobody | Postgres is bound to localhost; leave closed. |
+| any | **outbound** | the internet | The node needs to reach bootstrap peers, IPFS, and `api.github.com` (release lookup). Usually already allowed. |
 
-`ufw` example (open only the swarm port publicly):
+`ufw` example (open only the swarm ports publicly):
 
 ```bash
-sudo ufw allow 4002/tcp        # SWARM_PORT — and 4002, 4003, ... for extra nodes
+sudo ufw allow 4001/tcp        # SWARM_PORT for node 1 — 4002, 4003, ... for extra nodes
 # expose the API only to a specific backend if needed:
 # sudo ufw allow from <backend-ip> to any port 20000 proto tcp
 ```
@@ -184,7 +236,35 @@ curl -s -X POST localhost:20000/rubix/v1/signature \
 
 `./node.sh status` lists the DIDs the node holds at any time.
 
-## 9. Troubleshooting
+## 9. Fleet helper scripts (DIDs, quorums, balances)
+
+These automate the calls above across a fleet. **They assume the `start_nodes.sh` port
+block (API 8000–8009) and are hardcoded to those ten ports** — they won't find a node
+started as plain `./node.sh up 1` on 20000. All of them need `jq`.
+
+```bash
+./create_dids.sh              # create one DID per node (ports 8000-8009) -> did_results.json
+./register_dids.sh            # register every DID in did_results.json (register + signature)
+./check_balances.sh           # balance table for every DID in did_results.json
+./list_configed_quorum.sh     # show the quorum list each node has configured
+./add_quorum.sh               # POST /quorums/add for every entry in quorum_did.json
+./get_facuet_by_one_rbt.sh    # ask faucet.rubix.net for RBT for every DID (1s apart)
+```
+
+Notes:
+
+- **`DID_PASSWORD` defaults to `mypassword`** in `create_dids.sh` and
+  `register_dids.sh`. Set a real one — and the same one for both:
+  `DID_PASSWORD='…' ./create_dids.sh`. This password protects the node's keys.
+- `did_results.json` is written by `create_dids.sh` and read by all the others; it
+  holds `{port, did, peer_id}` per node.
+- `quorum_did.json` is **not generated** by any script — you create it yourself, as a
+  JSON array of `{"port": 8000, "did": "…"}` objects listing the quorum DIDs to add.
+- Both files are git-ignored, and hold identifiers for your nodes — keep them local.
+- The faucet is a Rubix-hosted service for funding test DIDs; it isn't part of this
+  repo and can be rate-limited or down.
+
+## 10. Troubleshooting
 
 - **Can't reach the API from another machine** → it's bound to `127.0.0.1` by design.
   Start with `--api-bind 0.0.0.0`, open the port to your backend only, and never to
@@ -192,29 +272,50 @@ curl -s -X POST localhost:20000/rubix/v1/signature \
 - **Public IP / peers can't reach the node** → open/forward `SWARM_PORT` inbound
   (firewall + router). Check `./node.sh status` → "connected peers".
 - **Node container exits immediately** → `./node.sh logs`. A `network_mode` mismatch
-  ("Existing=… New=…") means the data dir was created on a different network — wipe it
-  (`./node.sh down --wipe`) before switching networks.
+  ("ERROR: Network mismatch. Existing=… New=…") means the data dir was created on a
+  different network — wipe it (`./node.sh down 1 --wipe`, or
+  `./start_nodes.sh --mainnet --wipe-switch` for the whole fleet) before switching.
+- **`./start_nodes.sh` still starts testnet nodes after you edited a default** →
+  defaults only apply to *new* nodes. An existing `.env.nodeN` wins; check it with
+  `grep NETWORK_MODE .env.node1`.
 - **Port already in use** → pick another with `--api-port` / `--swarm-port` /
   `--pg-port`, or run as a different node index.
+- **Permission denied on `./data/nodeN`** → something was run with `sudo`. Fix with
+  `sudo chown -R "$USER:$USER" .` and stop using sudo.
+- **"couldn't reach GitHub for the latest release"** → offline or rate-limited. The
+  scripts fall back to `FALLBACK_VERSION` in `common.sh`; pass `--version <tag>`
+  explicitly to be sure of what you get.
 - **Reset everything for this node** → `./node.sh down --wipe` then `./node.sh up`.
 - **Changing the Postgres major version** (e.g. 16 → 18) is **not in-place** — a data
   dir created by the old version won't start under the new one. Just start fresh:
   `./node.sh down 1 --wipe` then `./node.sh up 1` (the node re-creates its DID and
   state on a clean Postgres 18).
 
-## 10. Files in this folder
+## 11. Files in this folder
 
 ```
-node.sh             # the one tool: up / down / logs / status / ls
-run.sh stop.sh status.sh   # shortcuts for node.sh up / down / status
-update.sh           # check for + apply a new release (with confirmation)
-docker-compose.yml  # node + postgres definition (variables come from .env.nodeN)
-Dockerfile          # node image: downloads the release binary + kubo (IPFS)
-entrypoint.sh       # node startup (config, swarm key, init, run)
-config.template.toml# node config (DB + bootstrap peers; filled at start)
-swarm/              # IPFS swarm keys (testnet / localnet / mainnet)
-.env.example        # reference for all settings
-data/               # created at runtime — node + Postgres data (persists)
+node.sh              # the one tool: up / down / logs / status / ls
+run.sh stop.sh status.sh    # shortcuts for node.sh up / down / status
+start_nodes.sh       # bring up a fleet (default 10 nodes, API 8000-8009)
+kill_nodes.sh        # stop the fleet (--wipe to delete data + env files)
+update.sh            # check for + apply a new release (--all for every node)
+common.sh            # shared helpers (latest-release lookup, env file readers)
+create_dids.sh       # create a DID per node          -> did_results.json
+register_dids.sh     # register those DIDs on the network
+check_balances.sh    # balance table for every DID
+add_quorum.sh        # add quorum DIDs from quorum_did.json
+list_configed_quorum.sh     # show each node's configured quorums
+get_facuet_by_one_rbt.sh    # request faucet RBT for every DID
+docker-compose.yml   # node + postgres definition (variables come from .env.nodeN)
+docker-compose.branch.yml   # overlay used when BUILD_BRANCH is set
+Dockerfile           # node image: downloads the release binary + kubo (IPFS)
+Dockerfile.branch    # builds rubixgoplatform from a git ref instead
+entrypoint.sh        # node startup (config, swarm key, init, run)
+config.template.toml # node config (DB + bootstrap peers; filled at start)
+swarm/               # IPFS swarm keys (testnet / localnet / mainnet)
+.env.example         # reference for all settings
+.env.nodeN           # per-node config, created by node.sh (git-ignored)
+data/                # created at runtime — node + Postgres data (persists)
 ```
 
 > This package targets the `rubixgoplatform` **release-v1** line (Postgres + the
