@@ -19,6 +19,9 @@
 #   ./node.sh up 1 --branch my-feature-branch
 #   ./node.sh up 2 --branch main              # build latest main
 # The branch is remembered in .env.nodeN and used on every subsequent restart.
+# To pull NEW commits from the same branch, add --rebuild (a plain restart reuses
+# Docker's cached clone and would keep running the old binary):
+#   ./node.sh up 1 --rebuild
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 . ./common.sh
@@ -31,6 +34,7 @@ case "$cmd" in
     echo "usage: ./node.sh <up|down|logs|status|ls> [index] [flags]   (index defaults to 1)"
     echo "  --wipe              (with down) also delete ./data/nodeN and .env.nodeN"
     echo "  --branch <branch>   build from a git branch instead of a release binary"
+    echo "  --rebuild           re-clone the branch (picks up new commits on it)"
     echo "  --version <v>       release version to download (default: latest GitHub release)"
     echo "  --network <net>     testnet | mainnet | localnet"
     echo "  --api-port <n>      host port for the Rubix HTTP API"
@@ -142,8 +146,10 @@ EOF
 fi
 
 set_env() { local k="$1" v="$2"; if grep -qE "^${k}=" "$ENVF"; then sed -i.bak "s|^${k}=.*|${k}=${v}|" "$ENVF" && rm -f "${ENVF}.bak"; else echo "${k}=${v}" >> "$ENVF"; fi; }
+REBUILD=0
 while [ $# -gt 0 ]; do
   case "$1" in
+    --rebuild)     REBUILD=1; shift;;
     --version|--rubix-version) set_env RUBIX_VERSION "$2"; set_env BUILD_BRANCH ""; shift 2;;
     --branch)      set_env BUILD_BRANCH "$2"; shift 2;;
     --network)     set_env NETWORK_MODE "$2"; shift 2;;
@@ -162,6 +168,19 @@ EXTERNAL_IP="$(grep -E '^EXTERNAL_IP=' "$ENVF" | cut -d= -f2- | tr -d '[:space:]
 export EXTERNAL_IP
 
 DATA_PATH="$(grep -E '^DATA_PATH=' "$ENVF" | cut -d= -f2- | tr -d '[:space:]')"; mkdir -p "${DATA_PATH:-./data/$name}" 2>/dev/null || true
+
+# --rebuild invalidates the cached `git clone` layer in Dockerfile.branch so a branch
+# build picks up new commits. Harmless (and unused) for release-binary nodes.
+if [ "$REBUILD" -eq 1 ]; then
+  if grep -qE "^BUILD_BRANCH=.+" "$ENVF" 2>/dev/null; then
+    # Honour a value from the caller (update.sh sets one for a whole fleet run) so
+            # every node shares one fresh clone layer instead of recompiling each time.
+            BUILD_CACHEBUST="${BUILD_CACHEBUST:-$(date +%s)}"; export BUILD_CACHEBUST
+    echo "rebuilding node '$name' from a fresh clone of its branch ..."
+  else
+    echo "note: --rebuild only affects branch builds; node '$name' runs a release binary."
+  fi
+fi
 
 compose up -d --build
 api="$(grep -E '^API_PORT=' "$ENVF" | cut -d= -f2-)"; sw="$(grep -E '^SWARM_PORT=' "$ENVF" | cut -d= -f2-)"

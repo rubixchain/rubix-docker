@@ -74,6 +74,7 @@ keeps it next time:
 |---|---|---|
 | `--version <tag>` | **latest GitHub release** | `rubixgoplatform` release to run. Looked up from `rubixchain/rubixgoplatform` when the node is first created, then **pinned** in `.env.nodeN` |
 | `--branch <ref>` | — | build from a git branch/tag/SHA instead of a release ([below](#build-from-a-source-branch-advanced)) |
+| `--rebuild` | — | with a branch build: re-clone so new commits on that branch are picked up |
 | `--network <mode>` | `testnet` | `testnet` / `mainnet` / `localnet` — fixed for the life of the data dir |
 | `--api-port <port>` | `20000 + (N-1)` | host port for the node HTTP API (it always runs on 20000 *inside* the container — this is the port you connect to) |
 | `--api-bind <ip>` | `127.0.0.1` | interface the API binds to. `0.0.0.0` only if a remote backend needs it (then firewall it — the API has no auth) |
@@ -118,6 +119,8 @@ port opened inbound** (4001, 4002, 4003, …).
 ./start_nodes.sh --nodes 4       # only nodes 1-4
 ./start_nodes.sh --version v1.0.4   # pin/change the release for every node
 ./start_nodes.sh --version latest   # move every node to the newest release
+./start_nodes.sh --branch dev-x     # build every node from a git ref instead
+./start_nodes.sh --rebuild          # re-clone: new commits on the branch they run
 ./kill_nodes.sh                  # stop them all (data kept)
 ./kill_nodes.sh --wipe           # stop AND delete every data dir + .env.nodeN
 ```
@@ -165,6 +168,9 @@ Versions are **pinned** — a node never changes version on a plain restart.
 ./update.sh --check      # report versions only, change nothing
 ```
 
+Branch builds have their own modes — `--branch <ref>`, `--rebuild`, `--release` — see
+[Build from a source branch](#build-from-a-source-branch-advanced).
+
 GitHub is queried once per run, however many nodes are checked. Nodes that are already
 current, pinned *ahead* of the latest release, or built from a branch are reported and
 left alone; if one node fails to rebuild the rest still get updated (the script exits
@@ -182,20 +188,52 @@ Either way your data is untouched — only the binary is replaced.
 
 By default a node runs the official **release binary**. To build from a
 `rubixgoplatform` git **branch, tag, or commit** instead — e.g. to test a fix before
-it's released:
+it's released — switch any node at any time. Node data is preserved; only the binary
+changes:
 
 ```bash
-./node.sh up 1 --branch development     # clone + compile that ref, then run
+./node.sh up 1 --branch development        # one node
+./start_nodes.sh --branch development      # every node in the fleet
+./update.sh --all --branch development     # same, via update.sh
 ```
 
-The branch is remembered as `BUILD_BRANCH` in `.env.nodeN`, so every later restart
+The ref is remembered as `BUILD_BRANCH` in `.env.nodeN`, so every later restart
 rebuilds from it (`node.sh` layers `docker-compose.branch.yml` automatically).
-`./update.sh` skips branch-built nodes — there's no release to compare against.
-Return to a release binary at any time:
+
+**Picking up new commits on that same branch needs `--rebuild`.** A plain restart
+reuses Docker's cached `git clone` layer, so it would keep running the binary you
+built the first time:
 
 ```bash
-./node.sh up 1 --version v1.0.0         # clears the branch, back to the release
+./update.sh --all --rebuild     # re-clone + recompile every branch-built node
+./node.sh up 1 --rebuild        # just node 1
 ```
+
+`--rebuild` changes the `BUILD_CACHEBUST` build arg, which invalidates the clone layer
+in `Dockerfile.branch` and nothing before it. Across a fleet the whole run shares one
+value, so the first node compiles and the rest reuse its layers.
+
+Going back to a release binary clears the branch:
+
+```bash
+./update.sh --all --release     # every node -> latest release
+./node.sh up 1 --version v1.0.5 # one node -> a specific release
+```
+
+In its default (release) mode `./update.sh` reports branch-built nodes and leaves them
+alone — there's no release version to compare against.
+
+| Want to… | Command |
+|---|---|
+| Put the fleet on a branch | `./update.sh --all --branch <ref>` |
+| Pull new commits on that branch | `./update.sh --all --rebuild` |
+| See what would change first | add `--check` |
+| Go back to release binaries | `./update.sh --all --release` |
+| Do any of the above for one node | replace `--all` with the index, e.g. `./update.sh 3 --branch <ref>` |
+
+`--branch`, `--rebuild` and `--release` are mutually exclusive. Each mode surveys
+every node and asks once before touching anything (`--yes` skips the prompt); if one
+node fails to build the rest still proceed.
 
 To build from a fork or a different main package path, override the `BUILD_REPO` /
 `BUILD_PKG` / `GO_VERSION` build args in `Dockerfile.branch`.
@@ -310,6 +348,7 @@ docker-compose.yml   # node + postgres definition (variables come from .env.node
 docker-compose.branch.yml   # overlay used when BUILD_BRANCH is set
 Dockerfile           # node image: downloads the release binary + kubo (IPFS)
 Dockerfile.branch    # builds rubixgoplatform from a git ref instead
+                     # (BUILD_CACHEBUST arg is what --rebuild changes)
 entrypoint.sh        # node startup (config, swarm key, init, run)
 config.template.toml # node config (DB + bootstrap peers; filled at start)
 swarm/               # IPFS swarm keys (testnet / localnet / mainnet)

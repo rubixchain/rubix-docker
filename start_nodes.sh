@@ -15,6 +15,8 @@
 #   --version <v>     rubixgoplatform release to run. Defaults to the LATEST GitHub
 #                     release when a node is first created; "latest" forces a re-check
 #                     for nodes that already exist.
+#   --branch <ref>    build every node from a git branch/tag/SHA instead of a release
+#   --rebuild         with --branch: re-clone first, so new commits are picked up
 #   --nodes <n>       how many nodes to start (default 10)
 #   --wipe-switch     DESTRUCTIVE: allow moving already-created nodes to a different
 #                     network by deleting their data dir first (DIDs/keys/tokens go too)
@@ -26,6 +28,8 @@ DEFAULT_NETWORK=testnet          # first-init default; mainnet requires an expli
 NODE_COUNT="${NODE_COUNT:-10}"
 NETWORK="${NETWORK_MODE:-}"      # explicit override; empty = "use what's stored"
 VERSION="${RUBIX_VERSION:-}"     # explicit override; empty = "use what's stored"
+BRANCH=""
+REBUILD=0
 WIPE_SWITCH=0
 
 usage() { print_usage_header "$0"; }
@@ -37,12 +41,18 @@ while [ $# -gt 0 ]; do
     --localnet)     NETWORK=localnet; shift;;
     --network)      NETWORK="${2:-}"; shift 2;;
     --version)      VERSION="${2:-}"; shift 2;;
+    --branch)       BRANCH="${2:-}"; shift 2;;
+    --rebuild)      REBUILD=1;    shift;;
     --nodes)        NODE_COUNT="${2:-}"; shift 2;;
     --wipe-switch)  WIPE_SWITCH=1;    shift;;
     -h|--help)      usage; exit 0;;
     *) echo "unknown flag: $1"; echo; usage; exit 1;;
   esac
 done
+
+if [ -n "$BRANCH" ] && [ -n "$VERSION" ]; then
+  echo "--branch and --version are mutually exclusive (a node runs one or the other)."; exit 1
+fi
 
 case "${NETWORK:-$DEFAULT_NETWORK}" in
   mainnet|testnet|localnet) ;;
@@ -70,9 +80,13 @@ if [ "$VERSION" = "latest" ]; then
   echo "Latest ${RUBIX_REPO} release: $VERSION"
 fi
 DEFAULT_VERSION=""
-if [ -n "$new_nodes" ] && [ -z "$VERSION" ]; then
+if [ -n "$new_nodes" ] && [ -z "$VERSION" ] && [ -z "$BRANCH" ]; then
   DEFAULT_VERSION="$(latest_release_or_fallback)"
   echo "New nodes will run the latest ${RUBIX_REPO} release: $DEFAULT_VERSION"
+fi
+
+if [ "$REBUILD" -eq 1 ]; then
+  BUILD_CACHEBUST="$(date +%s)"; export BUILD_CACHEBUST   # shared by every node below
 fi
 
 for i in $(seq 1 "$NODE_COUNT"); do
@@ -107,13 +121,20 @@ for i in $(seq 1 "$NODE_COUNT"); do
   args+=(--network "$net")
 
   # Version/branch. For an existing node, leave RUBIX_VERSION and BUILD_BRANCH alone
-  # unless --version was given — passing --version clears BUILD_BRANCH in node.sh.
-  if [ -n "$VERSION" ]; then
+  # unless --version/--branch was given — passing --version clears BUILD_BRANCH in node.sh.
+  if [ -n "$BRANCH" ]; then
+    ver="branch $BRANCH"; args+=(--branch "$BRANCH")
+    [ "$REBUILD" -eq 1 ] && args+=(--rebuild)
+  elif [ -n "$VERSION" ]; then
     ver="$VERSION"; args+=(--version "$ver")
   elif [ "$existed" -eq 1 ]; then
     ver="${stored_branch:+branch $stored_branch}"; ver="${ver:-$stored_ver}"
+    if [ "$REBUILD" -eq 1 ] && [ -n "$stored_branch" ]; then
+      ver="$ver (re-clone)"; args+=(--rebuild)
+    fi
   elif [ -n "$stored_branch" ]; then          # node we just wiped — keep its branch
     ver="branch $stored_branch"; args+=(--branch "$stored_branch")
+    [ "$REBUILD" -eq 1 ] && args+=(--rebuild)
   elif [ -n "$stored_ver" ]; then             # node we just wiped — keep its version
     ver="$stored_ver"; args+=(--version "$ver")
   else                                        # brand-new node — latest release

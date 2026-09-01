@@ -5,6 +5,8 @@
 #   BUILD_BRANCH  — branch, tag, or full SHA to check out (required)
 #   BUILD_REPO    — repo URL override (default: rubixchain/rubixgoplatform)
 #   BUILD_PKG     — go build target (default: . — adjust if main is under cmd/)
+#   BUILD_CACHEBUST — change this value to force a fresh clone (new commits on the
+#                     same branch are otherwise served from Docker's layer cache)
 #   GO_VERSION    — Go toolchain version (default: 1.22)
 #   KUBO_VERSION  — kubo/IPFS binary version
 
@@ -14,13 +16,18 @@ FROM golang:${GO_VERSION}-bookworm AS builder
 ARG BUILD_BRANCH
 ARG BUILD_REPO=https://github.com/rubixchain/rubixgoplatform
 ARG BUILD_PKG=.
+ARG BUILD_CACHEBUST=0
 
 RUN test -n "${BUILD_BRANCH}" || { echo "BUILD_BRANCH is required"; exit 1; }
 
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
-RUN git clone --branch "${BUILD_BRANCH}" --depth 1 "${BUILD_REPO}" .
+# BUILD_CACHEBUST is referenced here on purpose: changing it invalidates this layer,
+# which is what makes `--rebuild` pick up new commits on an unchanged branch name.
+RUN echo "cachebust=${BUILD_CACHEBUST}" \
+    && git clone --branch "${BUILD_BRANCH}" --depth 1 "${BUILD_REPO}" . \
+    && git -C . log -1 --pretty='built from %H (%ci)' 
 
 RUN mkdir -p /out && \
     go build -trimpath -o /out/rubixgoplatform ${BUILD_PKG}

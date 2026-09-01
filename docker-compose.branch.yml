@@ -12,5 +12,6 @@ services:
       dockerfile: Dockerfile.branch
       args:
         BUILD_BRANCH: "${BUILD_BRANCH}"
+        BUILD_CACHEBUST: "${BUILD_CACHEBUST:-0}"
         KUBO_VERSION: "${KUBO_VERSION:-v0.19.1}"
     image: "rubix-node:branch-${BUILD_BRANCH_SLUG}"
