@@ -26,9 +26,9 @@ RUN set -eux; \
     cp "$bin" /app/rubixgoplatform; chmod +x /app/rubixgoplatform; \
     rm -rf /tmp/rubix /tmp/rubix.tar.gz
 
-# kubo (IPFS) binary
+# kubo (IPFS) binary — fetched from the GitHub release (dist.ipfs.tech has been unreliable)
 RUN set -eux; \
-    curl -fsSL "https://dist.ipfs.tech/kubo/${KUBO_VERSION}/kubo_${KUBO_VERSION}_linux-${TARGETARCH}.tar.gz" -o /tmp/kubo.tar.gz; \
+    curl -fsSL "https://github.com/ipfs/kubo/releases/download/${KUBO_VERSION}/kubo_${KUBO_VERSION}_linux-${TARGETARCH}.tar.gz" -o /tmp/kubo.tar.gz; \
     tar -xzf /tmp/kubo.tar.gz -C /tmp; \
     cp /tmp/kubo/ipfs /app/ipfs; chmod +x /app/ipfs; \
     rm -rf /tmp/kubo /tmp/kubo.tar.gz
@@ -36,5 +36,12 @@ RUN set -eux; \
 COPY entrypoint.sh /app/entrypoint.sh
 COPY config.template.toml /app/config.template.toml
 RUN chmod +x /app/entrypoint.sh /app/ipfs
+
+# Build provenance, readable from Docker alone (no env file needed):
+#   docker inspect -f '{{index .Config.Labels "org.rubixchain.version"}}' node1-node
+#   docker exec node1-node cat /app/BUILD_INFO
+RUN printf 'source=release\nversion=%s\n' "${RUBIX_VERSION}" > /app/BUILD_INFO
+LABEL org.rubixchain.source="release" \
+      org.rubixchain.version="${RUBIX_VERSION}"
 
 ENTRYPOINT ["/app/entrypoint.sh"]

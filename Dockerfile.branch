@@ -27,7 +27,11 @@ WORKDIR /src
 # which is what makes `--rebuild` pick up new commits on an unchanged branch name.
 RUN echo "cachebust=${BUILD_CACHEBUST}" \
     && git clone --branch "${BUILD_BRANCH}" --depth 1 "${BUILD_REPO}" . \
-    && git -C . log -1 --pretty='built from %H (%ci)' 
+    && git -C . log -1 --pretty='built from %H (%ci)' \
+    && mkdir -p /out \
+    && printf 'source=branch\nbranch=%s\ncommit=%s\ncommit_date=%s\nrepo=%s\n' \
+         "${BUILD_BRANCH}" "$(git rev-parse HEAD)" "$(git log -1 --pretty=%cI)" "${BUILD_REPO}" \
+         > /out/BUILD_INFO
 
 RUN mkdir -p /out && \
     go build -trimpath -o /out/rubixgoplatform ${BUILD_PKG}
@@ -46,7 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # kubo and static files first — these don't change between branches, so they
 # stay cached. Only the binary copy below busts the cache on a branch switch.
 RUN set -eux; \
-    curl -fsSL "https://dist.ipfs.tech/kubo/${KUBO_VERSION}/kubo_${KUBO_VERSION}_linux-${TARGETARCH}.tar.gz" -o /tmp/kubo.tar.gz; \
+    curl -fsSL "https://github.com/ipfs/kubo/releases/download/${KUBO_VERSION}/kubo_${KUBO_VERSION}_linux-${TARGETARCH}.tar.gz" -o /tmp/kubo.tar.gz; \
     tar -xzf /tmp/kubo.tar.gz -C /tmp; \
     cp /tmp/kubo/ipfs /app/ipfs; chmod +x /app/ipfs; \
     rm -rf /tmp/kubo /tmp/kubo.tar.gz
@@ -58,5 +62,13 @@ RUN chmod +x /app/entrypoint.sh /app/ipfs
 # Branch-specific binary — cache busts here and nowhere else on branch change.
 COPY --from=builder /out/rubixgoplatform /app/rubixgoplatform
 RUN chmod +x /app/rubixgoplatform
+
+# Build provenance, readable from Docker alone (no env file needed):
+#   docker inspect -f '{{index .Config.Labels "org.rubixchain.branch"}}' node1-node
+#   docker exec node1-node cat /app/BUILD_INFO      # branch, commit, commit date
+ARG BUILD_BRANCH
+COPY --from=builder /out/BUILD_INFO /app/BUILD_INFO
+LABEL org.rubixchain.source="branch" \
+      org.rubixchain.branch="${BUILD_BRANCH}"
 
 ENTRYPOINT ["/app/entrypoint.sh"]

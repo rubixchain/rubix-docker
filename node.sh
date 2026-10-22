@@ -78,6 +78,14 @@ if [ "$cmd" = status ]; then
     st="$(docker inspect -f '{{.State.Status}}{{if .State.Health}} / {{.State.Health.Status}}{{end}}' "$c" 2>/dev/null || echo 'not found')"
     printf "  %-22s %s\n" "$c" "$st"
   done
+  echo; echo "build  (from the image, not the env file)"
+  img="$(docker inspect -f '{{.Config.Image}}' "$NODE_C" 2>/dev/null || true)"
+  echo "  image   : ${img:-?}"
+  if docker exec "$NODE_C" test -f /app/BUILD_INFO 2>/dev/null; then
+    docker exec "$NODE_C" cat /app/BUILD_INFO 2>/dev/null | sed 's/^/  /'
+  else
+    echo "  (image predates build info — rebuild with ./node.sh up $idx --rebuild to get branch/commit)"
+  fi
   echo; echo "postgres"
   if docker exec "$PG_C" pg_isready -U rubix >/dev/null 2>&1; then
     size="$(docker exec "$PG_C" psql -U rubix -d rubix -tAc "select pg_size_pretty(pg_database_size('rubix'))" 2>/dev/null | tr -d '[:space:]' || echo '?')"

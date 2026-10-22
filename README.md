@@ -47,7 +47,7 @@ initialises the node — **1–2 minutes**. It auto-creates the node's config, s
 nothing to edit. When it's ready:
 
 ```bash
-./node.sh status        # ✓ Postgres / ✓ API / ✓ IPFS, peer id, DIDs, storage, cpu/mem
+./node.sh status        # build (branch/commit), ✓ Postgres / ✓ API / ✓ IPFS, peer id, DIDs, storage, cpu/mem
 curl -s localhost:20000/api/ping
 ```
 
@@ -213,6 +213,20 @@ built the first time:
 in `Dockerfile.branch` and nothing before it. Across a fleet the whole run shares one
 value, so the first node compiles and the rest reuse its layers.
 
+**Which branch is a node actually running?** Ask the image, not the env file.
+Every image records its provenance at build time, as labels and as
+`/app/BUILD_INFO` (branch, commit, commit date):
+
+```bash
+./node.sh status 1                        # "build" section
+docker exec node1-node cat /app/BUILD_INFO
+docker inspect -f '{{index .Config.Labels "org.rubixchain.branch"}}' node1-node
+```
+
+Images built before this was added have no labels; `--rebuild` once and they
+appear. Until then the image tag (`rubix-node:branch-<name>`) is the record.
+Fleet-wide one-liners are in [TROUBLESHOOTING.md](TROUBLESHOOTING.md#4-which-branch--binary-is-a-node-running).
+
 Going back to a release binary clears the branch:
 
 ```bash
@@ -304,6 +318,9 @@ Notes:
 
 ## 10. Troubleshooting
 
+> Nodes restarting, "who rebuilt the fleet?", reading a crash, checking which
+> branch/commit a node runs — see **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)**.
+
 - **Can't reach the API from another machine** → it's bound to `127.0.0.1` by design.
   Start with `--api-bind 0.0.0.0`, open the port to your backend only, and never to
   the public internet (no auth).
@@ -338,6 +355,7 @@ start_nodes.sh       # bring up a fleet (default 10 nodes, API 8000-8009)
 kill_nodes.sh        # stop the fleet (--wipe to delete data + env files)
 update.sh            # check for + apply a new release (--all for every node)
 common.sh            # shared helpers (latest-release lookup, env file readers)
+TROUBLESHOOTING.md   # runbook: restarts vs rebuilds, reading crashes, branch/commit checks
 create_dids.sh       # create a DID per node          -> did_results.json
 register_dids.sh     # register those DIDs on the network
 check_balances.sh    # balance table for every DID

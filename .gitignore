@@ -6,6 +6,7 @@ data/
 .DS_Store
 
 # generated / environment-specific node state
+backups/
 did_results.json
 quorum_did.json
 rubixgoplatform-*.tar.gz
