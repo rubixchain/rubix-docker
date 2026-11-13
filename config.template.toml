@@ -29,3 +29,9 @@ testnet_bootstrap_nodes = [
 ]
 localnet_bootstrap_nodes = [
 ]
+
+[server]
+  # Inside the container, listen on all interfaces so Docker's port mapping can
+  # reach the API. Host exposure is still controlled by API_BIND in
+  # docker-compose.yml (127.0.0.1 by default).
+  host = "0.0.0.0"
